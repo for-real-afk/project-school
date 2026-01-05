@@ -49,24 +49,23 @@ pip install -r requirements.txt
 
 ### 4. Configure MongoDB Connection
 
-Create a `.env` file in the project root:
+**You already have a MongoDB Atlas cluster!** 
 
+Edit the `.env` file and replace `<db_password>` with your actual password:
+
+```env
+MONGODB_URL=mongodb+srv://agriculture_admin:YOUR_ACTUAL_PASSWORD@agriculture.ayck7vs.mongodb.net/?appName=Agriculture
+DATABASE_NAME=projects
+```
+
+**Database Structure:**
+- Database name: `projects`
+- Collection 1: `projects` (stores project documents)
+- Collection 2: `tasks` (stores task documents)
+
+**Test the connection:**
 ```bash
-cp .env.example .env
-```
-
-Edit `.env` and add your MongoDB connection string:
-
-**For Local MongoDB:**
-```env
-MONGODB_URL=mongodb://localhost:27017
-DATABASE_NAME=project_management
-```
-
-**For MongoDB Atlas:**
-```env
-MONGODB_URL=mongodb+srv://username:password@cluster.mongodb.net/?retryWrites=true&w=majority
-DATABASE_NAME=project_management
+python test_connection.py
 ```
 
 ### 5. Start MongoDB (if using local)
@@ -120,22 +119,22 @@ Indexes are automatically created on:
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| POST | `/save-project` | Create a new project |
-| GET | `/save-project` | Get all projects |
-| GET | `/save-project/{project_id}` | Get a specific project |
-| PUT | `/save-project/{project_id}` | Update a project |
-| DELETE | `/save-project/{project_id}` | Delete a project |
-| GET | `/save-project/{project_id}/stats` | Get project statistics |
+| POST | `/project` | Create a new project |
+| GET | `/project` | Get all projects |
+| GET | `/project/{project_id}` | Get a specific project |
+| PUT | `/project/{project_id}` | Update a project |
+| DELETE | `/project/{project_id}` | Delete a project |
+| GET | `/project/{project_id}/stats` | Get project statistics |
 
 ### Tasks
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| POST | `/save-project-tasks` | Create a new task |
-| GET | `/save-project-tasks` | Get all tasks (optional project_id filter) |
-| GET | `/save-project-tasks/{task_id}` | Get a specific task |
-| PUT | `/save-project-tasks/{task_id}` | Update a task |
-| DELETE | `/save-project-tasks/{task_id}` | Delete a task |
+| POST | `/project-tasks` | Create a new task |
+| GET | `/project-tasks` | Get all tasks (optional project_id filter) |
+| GET | `/project-tasks/{task_id}` | Get a specific task |
+| PUT | `/project-tasks/{task_id}` | Update a task |
+| DELETE | `/project-tasks/{task_id}` | Delete a task |
 
 ## Usage Examples
 
@@ -294,14 +293,15 @@ response = requests.get(f"{BASE_URL}/save-project/{project_id}/stats")
 print("Stats:", response.json())
 ```
 
-## MongoDB Atlas Setup (Cloud Database)
+## Your MongoDB Configuration
 
-1. **Create Account**: Sign up at https://www.mongodb.com/cloud/atlas
-2. **Create Cluster**: Choose free tier (M0)
-3. **Create Database User**: Set username and password
-4. **Whitelist IP**: Add your IP or use 0.0.0.0/0 for testing
-5. **Get Connection String**: Copy from "Connect" button
-6. **Update .env**: Paste connection string in MONGODB_URL
+You're connected to MongoDB Atlas cluster:
+- **Cluster**: agriculture.ayck7vs.mongodb.net
+- **User**: agriculture_admin
+- **Database**: projects
+- **Collections**: projects, tasks (auto-created)
+
+The collections will be automatically created when you first add data.
 
 ## Environment Variables
 
