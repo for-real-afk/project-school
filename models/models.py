@@ -33,13 +33,20 @@ class Goal(BaseModel):
     userId: str
     goals: List[str]
 
+# This is the TypedDict used by LangGraph to pass data between nodes
 class AgentState(TypedDict):
     userId: str
     message: str
+    # Annotated with add_messages so history persists correctly
     messages: Annotated[Sequence[BaseMessage], add_messages]
     goals: List[str]
     active_task: Optional[dict]
+    # New fields for the multi-node logic
+    project_pool: Optional[List[dict]] 
+    selected_project_id: Optional[str]
+    assigned_tasks: Optional[List[str]] 
     response_text: str
+    next_action: Optional[str] # To help with routing logic
 
 class TaskUpdate(BaseModel):
     title: Optional[str] = None

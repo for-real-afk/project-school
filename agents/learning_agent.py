@@ -1,91 +1,87 @@
 from langgraph.graph import StateGraph, END
 from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_core.messages import SystemMessage
+from langchain_core.messages import SystemMessage, HumanMessage
 from models import AgentState
+from typing import Literal
 import os
-from dotenv import load_dotenv
-
-
-# Load environment variables first
-load_dotenv()
-
-
+import json
+from datetime import datetime
 
 
 def get_learning_agent(db):
-    api_key = os.getenv("GOOGLE_API_KEY")
-    if not api_key:
-        raise ValueError("GOOGLE_API_KEY not found in environment variables")
-
-
-    print(f"🔍 Using API Key: {api_key[:10]}...")  # Debug print
-
-
-    # Use gemini-1.5-pro (most stable option)
     llm = ChatGoogleGenerativeAI(
-        model="gemini-2.5-flash",
-        temperature=0.7,
-        google_api_key=api_key
+        model="gemini-1.5-flash", # Stable production model
+        temperature=0.2,
+        google_api_key=os.getenv("GOOGLE_API_KEY")
     )
 
-
-    print("✅ LLM initialized with model: gemini-1.5-pro")
-
-
-    async def analyze_state(state: AgentState):
+    # --- Node 1: Supervisor (Entry Point) ---
+    async def supervisor_node(state: AgentState):
         user_id = state["userId"]
+        # Fetch existing goals
         goals_doc = await db.goals.find_one({"userId": user_id})
-        task = await db.tasks.find_one({"assigned_to": user_id, "status": {"$ne": "completed"}})
+        goals = goals_doc.get("goals", []) if goals_doc else []
+        
+        return {"goals": goals}
 
+    # --- Routing Logic ---
+    def router(state: AgentState) -> Literal["planner", "ask_for_goals"]:
+        if not state.get("goals") or len(state["goals"]) == 0:
+            return "ask_for_goals"
+        return "planner"
 
-        print(f"📊 Analyzed state for user: {user_id}")
-        print(f"   Goals: {goals_doc['goals'] if goals_doc else []}")
-        print(f"   Active task: {task['title'] if task else 'None'}")
-
-
+    # --- Node 2: Ask for Goals (Fallback) ---
+    async def ask_for_goals_node(state: AgentState):
         return {
-            "goals": goals_doc["goals"] if goals_doc else [],
-            "active_task": task
+            "response_text": "I see you haven't set any career goals yet. To assign the right tasks, please tell me: What are your career goals? (e.g., 'I want to become a Senior Backend Engineer')"
         }
 
+    # --- Node 3: Task Planner (Gemini Alignment) ---
+async def task_planner_node(state: AgentState):
+    # 1. Fetch available projects
+    cursor = db.projects.find({"status": "active"}).limit(5)
+    projects = [p async for p in cursor]
+    project_text = "\n".join([f"ID:{p['_id']} Name:{p['name']}" for p in projects])
 
-    async def call_model(state: AgentState):
-        goals = state.get('goals', [])
-        active_task = state.get('active_task')
+    # 2. Gemini selects project and 5 tasks
+    prompt = f"User Goals: {state['goals']}\nPool:\n{project_text}\nPick 1 project and generate 5 tasks. Return JSON: {{'project_id': '...', 'tasks': [{{'title': '...', 'desc': '...'}}]}}"
+    
+    response = await llm.ainvoke(prompt)
+    # Parse the JSON from Gemini
+    data = json.loads(response.content.replace("```json", "").replace("```", ""))
 
+    # 3. Push to DB
+    for task_item in data['tasks']:
+        await db.tasks.insert_one({
+            "project_id": data['project_id'],
+            "title": task_item['title'],
+            "description": task_item.get('desc', ''),
+            "status": "pending",
+            "assigned_to": state["userId"],
+            "created_at": datetime.now()
+        })
 
-        system_msg = f"""You are a helpful learning mentor and project assistant.
+    return {"response_text": f"I've assigned 5 tasks from project {data['project_id']} to your dashboard."}
 
-
-User's Goals: {', '.join(goals) if goals else 'No goals set yet'}
-Active Task: {active_task['title'] if active_task else 'No active tasks'}
-
-
-Provide helpful, encouraging guidance to help the user achieve their goals and complete their tasks."""
-
-
-        messages = [SystemMessage(content=system_msg)] + state["messages"]
-
-
-        print(f"🤖 Calling LLM with {len(messages)} messages...")
-
-
-        try:
-            response = await llm.ainvoke(messages)
-            print(f"✅ Got response: {response.content[:100]}...")
-            return {"response_text": response.content, "messages": [response]}
-        except Exception as e:
-            print(f"❌ LLM Error: {str(e)}")
-            raise
-
-
+    # --- Graph Construction ---
     workflow = StateGraph(AgentState)
-    workflow.add_node("analyze", analyze_state)
-    workflow.add_node("agent", call_model)
-    workflow.set_entry_point("analyze")
-    workflow.add_edge("analyze", "agent")
-    workflow.add_edge("agent", END)
+    
+    workflow.add_node("supervisor", supervisor_node)
+    workflow.add_node("ask_for_goals", ask_for_goals_node)
+    workflow.add_node("planner", task_planner_node)
 
+    workflow.set_entry_point("supervisor")
+    
+    workflow.add_conditional_edges(
+        "supervisor",
+        router,
+        {
+            "ask_for_goals": "ask_for_goals",
+            "planner": "planner"
+        }
+    )
+
+    workflow.add_edge("ask_for_goals", END)
+    workflow.add_edge("planner", END)
 
     return workflow.compile()
-
