@@ -213,3 +213,43 @@ async def rearrange_user_tasks(request: Request, payload: dict = Body(...)):
         "status": "success",
         "message": f"Task order updated for user {user_id}"
     }
+
+
+@router.post("/delete-user-task", status_code=200)
+async def delete_user_task(request: Request, payload: dict = Body(...)):
+    """
+    Delete a task assignment from a user's task list.
+    Removes the task from the assignments collection.
+    """
+    db = request.app.state.db
+    
+    user_id = payload.get("userId")
+    task_id = payload.get("taskId")
+    
+    if not user_id:
+        raise HTTPException(status_code=400, detail="userId is required")
+    
+    if not task_id:
+        raise HTTPException(status_code=400, detail="taskId is required")
+    
+    # Verify user assignment exists
+    assignment = await db.assignments.find_one({"userId": user_id})
+    if not assignment:
+        raise HTTPException(status_code=404, detail="No assignments found for this user")
+    
+    # Remove the task from the user's tasks array
+    result = await db.assignments.update_one(
+        {"userId": user_id},
+        {"$pull": {"tasks": {"taskId": task_id}}}
+    )
+    
+    if result.modified_count == 0:
+        raise HTTPException(
+            status_code=404, 
+            detail=f"Task {task_id} not found in user's assignments"
+        )
+    
+    return {
+        "status": "success",
+        "message": f"Task {task_id} deleted from user {user_id}'s assignments"
+    }
