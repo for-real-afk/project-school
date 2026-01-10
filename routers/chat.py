@@ -4,7 +4,7 @@ from models import Chat
 from agents.learning_agent import run_learning_agent, handle_agent_name_update
 from bson import ObjectId
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, List, Dict, Any
 
 router = APIRouter()
 
@@ -34,11 +34,61 @@ def serialize(doc):
     return doc
 
 
+def parse_agent_response_to_tasks(response_text: str) -> List[Dict[str, Any]]:
+    """
+    Parse the agent's response text to extract tasks.
+    Expected format: numbered list like "1. Task description 2. Another task..."
+    Returns a list of task objects with taskId and name.
+    """
+    tasks = []
+    
+    # Split by newlines first to handle multi-line format
+    lines = response_text.strip().split('\n')
+    
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+            
+        # Try to match numbered format: "1. Task name" or "1) Task name"
+        import re
+        match = re.match(r'^(\d+)[.\)]\s*(.+)$', line)
+        
+        if match:
+            task_number = match.group(1)
+            task_description = match.group(2).strip()
+            
+            # Generate a taskId (you might want to use actual task IDs from your database)
+            # For now, using a simple format: "suggested_task_{number}"
+            task_id = f"suggested_task_{task_number}"
+            
+            tasks.append({
+                "taskId": task_id,
+                "name": task_description,
+                "isSuggested": True  # Flag to indicate this is an AI-suggested task
+            })
+    
+    # Fallback: if no numbered items found, try splitting by common delimiters
+    if not tasks:
+        # Try splitting by numbers followed by period/parenthesis
+        parts = re.split(r'\d+[.\)]\s*', response_text)
+        for i, part in enumerate(parts[1:], 1):  # Skip first empty part
+            if part.strip():
+                tasks.append({
+                    "taskId": f"suggested_task_{i}",
+                    "name": part.strip(),
+                    "isSuggested": True
+                })
+    
+    return tasks
+
+
 @router.post("/agent", status_code=200)
 async def chat_with_agent(request: Request, agent_req: AgentRequest = Body(...)):
     """
     Invoke the learning agent for a user.
     Optionally accepts a message parameter for special operations like agent name updates.
+    Returns both a message and a structured tasks array for UI rendering.
     """
     db = request.app.state.db
     user_id = agent_req.userId
@@ -54,12 +104,18 @@ async def chat_with_agent(request: Request, agent_req: AgentRequest = Body(...))
             print("🔄 Detected agent name update message")
             agent_response = await handle_agent_name_update(db, user_id, message)
             status = "success"
+            tasks = []  # No tasks for name update
         else:
             # Regular learning agent invocation
             print("⚙️ Running learning agent...")
             result = await run_learning_agent(db, user_id)
             agent_response = result.get("response_text", "I couldn't process your request.")
             status = result.get("status", "error")
+            
+            # Parse the response to extract tasks
+            print("🔍 Parsing response for tasks...")
+            tasks = parse_agent_response_to_tasks(agent_response)
+            print(f"✅ Extracted {len(tasks)} tasks from response")
         
         print(f"✅ Agent completed with status: {status}")
     except Exception as e:
@@ -68,7 +124,9 @@ async def chat_with_agent(request: Request, agent_req: AgentRequest = Body(...))
         traceback.print_exc()
         agent_response = f"An error occurred: {str(e)}"
         status = "error"
+        tasks = []
 
+    # Store agent chat in database
     agent_chat_doc = {
         "userId": user_id,
         "userType": "agent",
@@ -80,7 +138,13 @@ async def chat_with_agent(request: Request, agent_req: AgentRequest = Body(...))
     print(f"💾 Stored agent response in chat history")
 
     created_chat = await db.chats.find_one({"_id": result.inserted_id})
-    return serialize(created_chat)
+    
+    # Return structured response with both message and tasks
+    return {
+        **serialize(created_chat),
+        "tasks": tasks,  # Add tasks array to response
+        "status": status
+    }
 
 
 @router.get("/history/{user_id}", response_model=list[Chat])
