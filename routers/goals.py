@@ -4,7 +4,6 @@ from utils.helpers import serialize
 from datetime import datetime
 from bson import ObjectId
 from pydantic import BaseModel
-from typing import List
 
 router = APIRouter()
 
@@ -12,7 +11,7 @@ router = APIRouter()
 class ManageGoalsRequest(BaseModel):
     """Request model for managing goals"""
     userId: str
-    goals: List[str]
+    goals: str  # Changed from List[str] to str
 
 
 class GetGoalsRequest(BaseModel):
@@ -60,29 +59,31 @@ async def get_user_goals(request: Request, user_id: str):
 async def manage_goals(request: Request, goals_req: ManageGoalsRequest = Body(...)):
     """
     Create or update goals for a user.
+    Goals is stored as a text string (up to 1024 characters).
     """
     db = request.app.state.db
     user_id = goals_req.userId
-    goals = goals_req.goals
+    goals_text = goals_req.goals
 
     print(f"📝 Managing goals for user: {user_id}")
 
-    # Validate goals
-    if not goals or len(goals) == 0:
-        raise HTTPException(status_code=400, detail="Goals list cannot be empty")
-
-    # Filter out empty goals
-    filtered_goals = [goal.strip() for goal in goals if goal and goal.strip()]
-    
-    if len(filtered_goals) == 0:
+    # Validate goals text
+    if not goals_text or not goals_text.strip():
         raise HTTPException(status_code=400, detail="Goals cannot be empty")
+
+    # Trim whitespace
+    goals_text = goals_text.strip()
+    
+    # Validate length (max 1024 characters)
+    if len(goals_text) > 1024:
+        raise HTTPException(status_code=400, detail="Goals cannot exceed 1024 characters")
 
     # Upsert goals document
     result = await db.goals.update_one(
         {"userId": user_id},
         {
             "$set": {
-                "goals": filtered_goals,
+                "goals": goals_text,
                 "updated_at": datetime.now()
             },
             "$setOnInsert": {
@@ -123,12 +124,12 @@ async def get_goals(request: Request, goals_req: GetGoalsRequest = Body(...)):
             "status": "success",
             "goals": {
                 "userId": user_id,
-                "goals": [],
+                "goals": "",
                 "isDefault": True
             }
         }
     
-    print(f"✅ Goals found: {len(goals_doc.get('goals', []))} goals")
+    print(f"✅ Goals found")
     
     return {
         "status": "success",
